@@ -1,13 +1,17 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["matplotlib", "pandas"]
+# dependencies = ["matplotlib", "pandas", "Pillow"]
 # ///
 
-"""Plot NOAA Storm Events by month, event type, and state."""
+"""Create a month-by-month GIF of NOAA Storm Event locations."""
 
 from pathlib import Path
+import json
 
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.lines import Line2D
+from matplotlib.patches import Polygon
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -16,18 +20,57 @@ import pandas as pd
 
 PAPER = "#faf8f4"
 INK = "#1d1d1b"
-LINE_FIGSIZE = (16, 8)
-RECORD_FIGSIZE = (18, 18)
-MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
+MAP_EDGE = "#b8b2a7"
+MAP_FILL = "#e8e3d8"
+MAP_BOUNDS = (-125, -66, 24, 50)  # contiguous United States
 HERE = Path(__file__).parent
 DATA = HERE / "data"
 OUT = HERE / "out"
+BOUNDARY_FILE = DATA / "us-states.json"
+GIF_TARGET = OUT / "us-extreme-weather-by-month.gif"
 
-# ---------------------------------------------------------------------------
-# The drawing.
-# ---------------------------------------------------------------------------
+
+def find_boundary_file():
+    """Return the state GeoJSON downloaded by fetch.py."""
+    if not BOUNDARY_FILE.exists():
+        raise SystemExit(
+            "data/us-states.json is missing; run fetch.py before plot.py"
+        )
+    return BOUNDARY_FILE
+
+
+def load_events(source):
+    """Read records with usable beginning coordinates and month values."""
+    events = pd.read_csv(source, low_memory=False)
+    events["MONTH"] = pd.to_numeric(
+        events["BEGIN_YEARMONTH"].astype(str).str[-2:], errors="coerce"
+    )
+    events["LAT"] = pd.to_numeric(events["BEGIN_LAT"], errors="coerce")
+    events["LON"] = pd.to_numeric(events["BEGIN_LON"], errors="coerce")
+    events = events.dropna(subset=["MONTH", "LAT", "LON", "EVENT_TYPE"])
+    return events
+
+
+def draw_states(axis, boundary_file):
+    """Draw only state polygons that fall inside the contiguous-U.S. view."""
+    with boundary_file.open(encoding="utf-8") as handle:
+        states = json.load(handle)["features"]
+    west, east, south, north = MAP_BOUNDS
+    for state in states:
+        geometry = state["geometry"]
+        polygons = geometry["coordinates"]
+        if geometry["type"] == "Polygon":
+            polygons = [polygons]
+        for polygon in polygons:
+            points = polygon[0]
+            if not any(west <= lon <= east and south <= lat <= north for lon, lat in points):
+                continue
+            axis.add_patch(
+                Polygon(
+                    points, closed=True, facecolor=MAP_FILL,
+                    edgecolor=MAP_EDGE, linewidth=0.55, zorder=1,
+                )
+            )
 
 
 def main():
@@ -36,101 +79,74 @@ def main():
         raise SystemExit("no StormEvents details CSV found in data/")
 
     source = files[-1]
-    events = pd.read_csv(source, low_memory=False)
-    events["MONTH"] = pd.to_numeric(events["BEGIN_YEARMONTH"].astype(str).str[-2:])
-    timestamp_format = "%d-%b-%y %H:%M:%S"
-    events["BEGIN"] = pd.to_datetime(
-        events["BEGIN_DATE_TIME"], format=timestamp_format, errors="coerce"
-    )
-    events["END"] = pd.to_datetime(
-        events["END_DATE_TIME"], format=timestamp_format, errors="coerce"
-    )
-    events["DURATION_HOURS"] = (events["END"] - events["BEGIN"]).dt.total_seconds() / 3600
-    events = events.dropna(subset=["MONTH", "DURATION_HOURS", "EVENT_TYPE", "STATE"])
-    first_month = int(events["MONTH"].min())
-    last_month = int(events["MONTH"].max())
-    active_months = list(range(first_month, last_month + 1))
-    active_month_labels = [MONTH_LABELS[month - 1] for month in active_months]
+    events = load_events(source)
+    if events.empty:
+        raise SystemExit("no records with usable coordinates found")
 
-    duration = events.pivot_table(
-        index="MONTH", columns="EVENT_TYPE", values="DURATION_HOURS", aggfunc="mean"
-    ).reindex(active_months)
-    counts = pd.crosstab(events["EVENT_TYPE"], events["STATE"])
-    state_month_counts = (
-        events.groupby(["MONTH", "STATE"])
-        .size()
-        .reset_index(name="ENTRIES")
-    )
-    states = sorted(state_month_counts["STATE"].unique())
-    colour_map = plt.get_cmap("turbo", len(states))
-    state_colours = {state: colour_map(number) for number, state in enumerate(states)}
+    shape_file = find_boundary_file()
+    months = sorted(events["MONTH"].astype(int).unique())
+    event_types = sorted(events["EVENT_TYPE"].unique())
+    colours = plt.get_cmap("tab20", len(event_types))
+    type_colours = {
+        event_type: colours(number) for number, event_type in enumerate(event_types)
+    }
+    type_counts = events["EVENT_TYPE"].value_counts()
 
-    line_figure, line_axis = plt.subplots(figsize=LINE_FIGSIZE, facecolor=PAPER)
-    for axis in (line_axis,):
-        axis.set_facecolor(PAPER)
-        axis.tick_params(colors=INK)
-        axis.grid(color=INK, alpha=0.1)
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
+    figure, axis = plt.subplots(figsize=(15, 8.5), facecolor=PAPER)
+    axis.set_facecolor(PAPER)
+    axis.set_xlim(MAP_BOUNDS[0], MAP_BOUNDS[1])
+    axis.set_ylim(MAP_BOUNDS[2], MAP_BOUNDS[3])
+    axis.set_aspect("equal", adjustable="box")
+    axis.set_xlabel("longitude", color=INK)
+    axis.set_ylabel("latitude", color=INK)
+    axis.tick_params(colors=INK)
+    axis.spines[:].set_visible(False)
+    draw_states(axis, shape_file)
 
-    duration.plot(ax=line_axis, marker="o", linewidth=1.5, colormap="tab20")
-    line_axis.set_title("Average event duration by month and event type", color=INK)
-    line_axis.set_xlabel("month", color=INK)
-    line_axis.set_ylabel("average duration (hours)", color=INK)
-    line_axis.set_xlim(first_month - 0.25, last_month + 0.25)
-    line_axis.set_xticks(active_months)
-    line_axis.set_xticklabels(active_month_labels)
-    line_axis.legend(title="EVENT_TYPE", bbox_to_anchor=(1.01, 1), loc="upper left",
-                     frameon=False, ncol=2, fontsize=8)
-
-    record_figure, (bar_axis, scatter_axis) = plt.subplots(
-        2, 1, figsize=RECORD_FIGSIZE, facecolor=PAPER,
-        gridspec_kw={"height_ratios": [1.15, 1.6]},
-    )
-    for axis in (bar_axis, scatter_axis):
-        axis.set_facecolor(PAPER)
-        axis.tick_params(colors=INK)
-        axis.grid(color=INK, alpha=0.1)
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
-
-    counts.plot(
-        kind="barh", stacked=True, ax=bar_axis,
-        color=[state_colours[state] for state in counts.columns],
-        legend=False,
-    )
-    bar_axis.set_title("Storm Event records by event type and state", color=INK)
-    bar_axis.set_xlabel("record entries", color=INK)
-    bar_axis.set_ylabel("event type", color=INK)
-    bar_axis.tick_params(axis="y", labelsize=9)
-
-    for state_number, state in enumerate(states):
-        state_rows = state_month_counts[state_month_counts["STATE"] == state]
-        scatter_axis.scatter(
-            state_rows["ENTRIES"], state_rows["MONTH"],
-            s=48, color=state_colours[state], alpha=0.78,
-            edgecolors=PAPER, linewidths=0.5, label=state,
+    legend_handles = [
+        Line2D(
+            [0], [0], marker="o", linestyle="", markersize=7,
+            markerfacecolor=type_colours[event_type], markeredgecolor=PAPER,
+            label=f"{event_type} ({type_counts[event_type]:,})",
         )
-    scatter_axis.set_title("Monthly record entries by state", color=INK)
-    scatter_axis.set_xlabel("record entries in that state and month", color=INK)
-    scatter_axis.set_ylabel("month from BEGIN_YEARMONTH", color=INK)
-    scatter_axis.set_yticks(active_months)
-    scatter_axis.set_yticklabels(active_month_labels)
-    scatter_axis.set_ylim(last_month + 0.5, first_month - 0.5)
-    scatter_axis.legend(
-        title="STATE", bbox_to_anchor=(1.01, 1), loc="upper left",
-        frameon=False, ncol=2, fontsize=8,
+        for event_type in event_types
+    ]
+    axis.legend(
+        handles=legend_handles,
+        title="EVENT_TYPE (all mapped records)",
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        frameon=False,
+        fontsize=8.5,
+        title_fontsize=9,
     )
 
+    def draw_frame(month):
+        points = events[events["MONTH"] == month]
+        for collection in list(axis.collections):
+            collection.remove()
+        for event_type, group in points.groupby("EVENT_TYPE"):
+            axis.scatter(
+                group["LON"], group["LAT"],
+                s=14, alpha=0.72, color=type_colours[event_type],
+                edgecolors=PAPER, linewidths=0.25, zorder=3,
+            )
+        axis.set_title(
+            f"U.S. extreme weather locations | {month:02d} / {int(events['YEAR'].iloc[0])}"
+            f" | {len(points):,} mapped records",
+            loc="left", color=INK, fontsize=15, pad=12,
+        )
+        return axis.collections
+
+    animation = FuncAnimation(
+        figure, draw_frame, frames=months, interval=1000, blit=False, repeat=True
+    )
     OUT.mkdir(exist_ok=True)
-    line_target = OUT / "storm-event-duration-by-month.png"
-    record_target = OUT / "storm-event-records-by-state.png"
-    line_figure.subplots_adjust(left=0.08, right=0.73, top=0.93, bottom=0.12)
-    record_figure.subplots_adjust(left=0.18, right=0.75, top=0.95, bottom=0.07, hspace=0.42)
-    line_figure.savefig(line_target, dpi=150, facecolor=PAPER)
-    record_figure.savefig(record_target, dpi=150, facecolor=PAPER)
-    print(f"wrote {line_target.relative_to(HERE)}")
-    print(f"wrote {record_target.relative_to(HERE)} from {source.name} — {len(events)} records")
+    figure.subplots_adjust(left=0.06, right=0.76, top=0.91, bottom=0.09)
+    animation.save(GIF_TARGET, writer=PillowWriter(fps=1), dpi=130)
+    plt.close(figure)
+    print(f"wrote {GIF_TARGET.relative_to(HERE)}")
+    print(f"used {len(events):,} mapped records across {len(months)} monthly frames")
 
 
 if __name__ == "__main__":

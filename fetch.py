@@ -19,6 +19,11 @@ YEAR = 2026
 HERE = Path(__file__).parent
 DATA_DIR = HERE / "data"
 BASE_URL = "https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/"
+BOUNDARY_URL = (
+    "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/"
+    "master/data/geojson/us-states.json"
+)
+BOUNDARY_FILE = DATA_DIR / "us-states.json"
 
 # ---------------------------------------------------------------------------
 # Getting the data. Fetch once, keep the file, parse the file.
@@ -58,10 +63,23 @@ def download_archive(name):
         print(f"already extracted {csv_file.name}")
 
 
+def download_boundary():
+    """Save the local state boundary used by the plotting script."""
+    if BOUNDARY_FILE.exists():
+        print(f"already downloaded {BOUNDARY_FILE.name}")
+        return
+
+    response = requests.get(BOUNDARY_URL, timeout=120)
+    response.raise_for_status()
+    BOUNDARY_FILE.write_bytes(response.content)
+    print(f"downloaded {BOUNDARY_FILE.name}")
+
+
 def main():
     name = archive_name()
     print(f"selected {name}")
     download_archive(name)
+    download_boundary()
 
 
 if __name__ == "__main__":
