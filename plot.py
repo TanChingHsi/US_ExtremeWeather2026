@@ -42,7 +42,6 @@ def find_boundary_file():
 def load_events(source):
     """Read records with usable coordinates and calendar-month boundaries."""
     events = pd.read_csv(source, low_memory=False)
-<<<<<<< HEAD
     begin_month = pd.to_numeric(events["BEGIN_YEARMONTH"], errors="coerce")
     end_month = pd.to_numeric(events["END_YEARMONTH"], errors="coerce")
     events["BEGIN_MONTH_INDEX"] = (
@@ -50,38 +49,15 @@ def load_events(source):
     )
     events["END_MONTH_INDEX"] = (
         end_month // 100 * 12 + end_month % 100
-=======
-    events["BEGIN_YEARMONTH"] = pd.to_numeric(
-        events["BEGIN_YEARMONTH"], errors="coerce"
-    )
-    events["END_YEARMONTH"] = pd.to_numeric(
-        events["END_YEARMONTH"], errors="coerce"
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
     )
     events["LAT"] = pd.to_numeric(events["BEGIN_LAT"], errors="coerce")
     events["LON"] = pd.to_numeric(events["BEGIN_LON"], errors="coerce")
     events = events.dropna(
-<<<<<<< HEAD
         subset=[
             "BEGIN_MONTH_INDEX", "END_MONTH_INDEX", "LAT", "LON", "EVENT_TYPE"
         ]
     )
     events = events[events["END_MONTH_INDEX"] >= events["BEGIN_MONTH_INDEX"]]
-=======
-        subset=["BEGIN_YEARMONTH", "LAT", "LON", "EVENT_TYPE"]
-    ).copy()
-    events["END_YEARMONTH"] = events["END_YEARMONTH"].fillna(
-        events["BEGIN_YEARMONTH"]
-    )
-    events["BEGIN_MONTH"] = (
-        events["BEGIN_YEARMONTH"] // 100 * 12
-        + events["BEGIN_YEARMONTH"] % 100
-    )
-    events["END_MONTH"] = (
-        events["END_YEARMONTH"] // 100 * 12
-        + events["END_YEARMONTH"] % 100
-    )
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
     return events
 
 
@@ -107,6 +83,34 @@ def draw_states(axis, boundary_file):
             )
 
 
+def build_type_colours(event_types):
+    """Create a deterministic, high-contrast colour mapping for each weather type."""
+    ordered_types = sorted(event_types)
+    vivid_colours = [
+        "#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00",
+        "#56B4E9", "#7B2CBF", "#D00000", "#008080", "#F07818",
+        "#3A86FF", "#8338EC", "#FF006E", "#2A9D8F", "#E76F51",
+        "#6A994E", "#BC4749", "#118AB2", "#EF476F", "#06A77D",
+    ]
+    if len(ordered_types) <= len(vivid_colours):
+        colours = vivid_colours[:len(ordered_types)]
+    else:
+        palette = plt.get_cmap("hsv", len(ordered_types))
+        colours = [palette(index) for index in range(len(ordered_types))]
+    return {
+        event_type: colours[index] for index, event_type in enumerate(ordered_types)
+    }
+
+
+def cumulative_event_totals(events, months):
+    """Return cumulative counts for each event type through each month."""
+    totals = {}
+    for month in months:
+        counts = events.loc[events["BEGIN_MONTH_INDEX"] <= month, "EVENT_TYPE"].value_counts()
+        totals[month] = counts.to_dict()
+    return totals
+
+
 def main():
     files = sorted(DATA.glob("StormEvents_details*.csv"))
     if not files:
@@ -118,20 +122,13 @@ def main():
         raise SystemExit("no records with usable coordinates found")
 
     shape_file = find_boundary_file()
-<<<<<<< HEAD
     first_month = int(events["BEGIN_MONTH_INDEX"].min())
     last_month = int(events["END_MONTH_INDEX"].max())
     months = list(range(first_month, last_month + 1))
-=======
-    months = range(
-        int(events["BEGIN_MONTH"].min()), int(events["END_MONTH"].max()) + 1
-    )
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
     event_types = sorted(events["EVENT_TYPE"].unique())
-    colours = plt.get_cmap("tab20", len(event_types))
-    type_colours = {
-        event_type: colours(number) for number, event_type in enumerate(event_types)
-    }
+    type_colours = build_type_colours(event_types)
+    cumulative_totals = cumulative_event_totals(events, months)
+
     figure, axis = plt.subplots(figsize=(15, 8.5), facecolor=PAPER)
     axis.set_facecolor(PAPER)
     axis.set_xlim(MAP_BOUNDS[0], MAP_BOUNDS[1])
@@ -143,60 +140,46 @@ def main():
     axis.spines[:].set_visible(False)
     draw_states(axis, shape_file)
 
-    legend_handles = [
-        Line2D(
-            [0], [0], marker="o", linestyle="", markersize=7,
-            markerfacecolor=type_colours[event_type], markeredgecolor=PAPER,
-            label=event_type,
-        )
-        for event_type in event_types
-    ]
-    legend = axis.legend(
-        handles=legend_handles,
-        title="EVENT_TYPE (monthly records)",
-        bbox_to_anchor=(1.02, 1),
-        loc="upper left",
-        frameon=False,
-        fontsize=8.5,
-        title_fontsize=9,
-    )
-
     def draw_frame(month):
         points = events[
-<<<<<<< HEAD
             (events["BEGIN_MONTH_INDEX"] <= month)
             & (events["END_MONTH_INDEX"] >= month)
         ].copy()
         points["AGE_MONTHS"] = month - points["BEGIN_MONTH_INDEX"]
         points["DOT_SIZE"] = 14 * (2 ** points["AGE_MONTHS"])
-=======
-            (events["BEGIN_MONTH"] <= month) & (events["END_MONTH"] >= month)
-        ]
-        month_counts = points["EVENT_TYPE"].value_counts()
-        for text, event_type in zip(legend.get_texts(), event_types):
-            text.set_text(f"{event_type} ({month_counts.get(event_type, 0):,})")
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
         for collection in list(axis.collections):
-            collection.remove()
+            if collection is not axis.collections[0] and hasattr(collection, "get_offsets"):
+                collection.remove()
         for event_type, group in points.groupby("EVENT_TYPE"):
-            linger_months = month - group["BEGIN_MONTH"]
             axis.scatter(
                 group["LON"], group["LAT"],
-<<<<<<< HEAD
                 s=group["DOT_SIZE"], alpha=0.72, color=type_colours[event_type],
-=======
-                s=14 * (2 ** linger_months), alpha=0.72,
-                color=type_colours[event_type],
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
                 edgecolors=PAPER, linewidths=0.25, zorder=3,
             )
+
         year, month_number = divmod(month, 12)
+        month_totals = cumulative_totals.get(month, {})
+        legend_handles = [
+            Line2D(
+                [0], [0], marker="o", linestyle="", markersize=7,
+                markerfacecolor=type_colours[event_type], markeredgecolor=PAPER,
+                label=f"{event_type} ({month_totals.get(event_type, 0):,})",
+            )
+            for event_type in event_types
+        ]
+        if axis.get_legend() is not None:
+            axis.get_legend().remove()
+        axis.legend(
+            handles=legend_handles,
+            title=f"EVENT_TYPE (cumulative through {year}-{month_number:02d})",
+            bbox_to_anchor=(1.02, 1),
+            loc="upper left",
+            frameon=False,
+            fontsize=8.5,
+            title_fontsize=9,
+        )
         axis.set_title(
-<<<<<<< HEAD
             f"U.S. extreme weather locations | {year}-{month_number:02d}"
-=======
-            f"U.S. extreme weather locations | {year} / {month_number:02d}"
->>>>>>> 59f19205891c13f94c318445973b0a30d9eb5889
             f" | {len(points):,} mapped records",
             loc="left", color=INK, fontsize=15, pad=12,
         )
