@@ -10,4 +10,4 @@ https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/
 you just run the plot.py file via uv and it'll generate the gif of a map of the US and spots that represents extreme weather, color coded by the EVENT_TYPE of the entry and featuring the tallied number of incidents that have showed up so far (in the intervals of a singular month for each frame)
 
 # how does it work?
-we can see the spread of the entries across the geographical locations, calculated and plotted via the coordinates within the .csv files, 
+We can see the spread of the entries across the geographical locations, calculated and plotted via the coordinates within the .csv files, and to reduce clutter there is a function within plot.py that's called download_boundary() where it grabs the required stats from the csv file and stuffs it into a new json file, then uses the draw_states() function to generate the gif of the map of the US and plots the points.
