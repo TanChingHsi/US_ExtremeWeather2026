@@ -40,14 +40,24 @@ def find_boundary_file():
 
 
 def load_events(source):
-    """Read records with usable beginning coordinates and month values."""
+    """Read records with usable coordinates and calendar-month boundaries."""
     events = pd.read_csv(source, low_memory=False)
-    events["MONTH"] = pd.to_numeric(
-        events["BEGIN_YEARMONTH"].astype(str).str[-2:], errors="coerce"
+    begin_month = pd.to_numeric(events["BEGIN_YEARMONTH"], errors="coerce")
+    end_month = pd.to_numeric(events["END_YEARMONTH"], errors="coerce")
+    events["BEGIN_MONTH_INDEX"] = (
+        begin_month // 100 * 12 + begin_month % 100
+    )
+    events["END_MONTH_INDEX"] = (
+        end_month // 100 * 12 + end_month % 100
     )
     events["LAT"] = pd.to_numeric(events["BEGIN_LAT"], errors="coerce")
     events["LON"] = pd.to_numeric(events["BEGIN_LON"], errors="coerce")
-    events = events.dropna(subset=["MONTH", "LAT", "LON", "EVENT_TYPE"])
+    events = events.dropna(
+        subset=[
+            "BEGIN_MONTH_INDEX", "END_MONTH_INDEX", "LAT", "LON", "EVENT_TYPE"
+        ]
+    )
+    events = events[events["END_MONTH_INDEX"] >= events["BEGIN_MONTH_INDEX"]]
     return events
 
 
@@ -84,7 +94,9 @@ def main():
         raise SystemExit("no records with usable coordinates found")
 
     shape_file = find_boundary_file()
-    months = sorted(events["MONTH"].astype(int).unique())
+    first_month = int(events["BEGIN_MONTH_INDEX"].min())
+    last_month = int(events["END_MONTH_INDEX"].max())
+    months = list(range(first_month, last_month + 1))
     event_types = sorted(events["EVENT_TYPE"].unique())
     colours = plt.get_cmap("tab20", len(event_types))
     type_colours = {
@@ -122,17 +134,23 @@ def main():
     )
 
     def draw_frame(month):
-        points = events[events["MONTH"] == month]
+        points = events[
+            (events["BEGIN_MONTH_INDEX"] <= month)
+            & (events["END_MONTH_INDEX"] >= month)
+        ].copy()
+        points["AGE_MONTHS"] = month - points["BEGIN_MONTH_INDEX"]
+        points["DOT_SIZE"] = 14 * (2 ** points["AGE_MONTHS"])
         for collection in list(axis.collections):
             collection.remove()
         for event_type, group in points.groupby("EVENT_TYPE"):
             axis.scatter(
                 group["LON"], group["LAT"],
-                s=14, alpha=0.72, color=type_colours[event_type],
+                s=group["DOT_SIZE"], alpha=0.72, color=type_colours[event_type],
                 edgecolors=PAPER, linewidths=0.25, zorder=3,
             )
+        year, month_number = divmod(month, 12)
         axis.set_title(
-            f"U.S. extreme weather locations | {month:02d} / {int(events['YEAR'].iloc[0])}"
+            f"U.S. extreme weather locations | {year}-{month_number:02d}"
             f" | {len(points):,} mapped records",
             loc="left", color=INK, fontsize=15, pad=12,
         )
