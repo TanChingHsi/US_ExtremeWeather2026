@@ -3,6 +3,8 @@
 # phenomenon type
 Honestly, I had trouble deciding on what phenomenon to do so I kind of sort of just yanked all of em at once. Got the data (in csv format) of specifically all the 2026 records of the locations and types of extreme weather sighted in the US. Took it from The National Centers for Environmental Information (NCEI).
 
+![gif result](out/us-extreme-weather-by-month.gif)
+
 # source link
 https://www.ncei.noaa.gov/pub/data/swdi/stormevents/csvfiles/
 
